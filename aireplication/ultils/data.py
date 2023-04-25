@@ -278,7 +278,7 @@ class TimeSeriesGenerator:
         return X_data, y_label
 
 
-from utils.datasets import *
+from aireplication.ultils.datasets import *
 
 
 def get_all_data_supported():
