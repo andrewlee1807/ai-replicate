@@ -71,7 +71,20 @@ class TimeSeriesGenerator:
         self.shift = shift
         self.shuffle = shuffle
 
-        self.X_train, self.X_test = self.split_data(data, config['train_ratio'])
+        """
+        The procedure of data preparation:
+        1. Split data into TRAIN and TEST
+            [num_record, timeseries-past, feature, timeseries-label]
+                example [16752, X] -> [15076, X], [1676, X]
+        2. Building the Time series data type: 
+            [num_record, timeseries-past, feature, timeseries-label]
+                example (1093, 168, 1, 7)
+        3. Normalize data
+        4. Split train data into TRAIN and VALID
+        5. Normalize data
+        """
+
+        self.X_train, self.X_test = self.split_data(data, config['train_ratio'])  # [16752, X] -> [15076, X], [1676, X]
 
         # ASSUME TRAIN AND TEST DATASET HAVE THE SAME DISTRIBUTION
         self.scaler_engine = None  # This is for the normalization of the TRAIN dataset but apply to test and valid
@@ -87,10 +100,15 @@ class TimeSeriesGenerator:
             self.X_valid, _ = self.normalize_dataset(self.X_valid, standardization_type=normalize_type,
                                                      scaler=self.scaler_engine)
 
-        self.data_train = self.build_tsd(self.X_train)  # (13568, 2) -> [(13399, 168, 2), (13399, 1, 2)]
-        self.data_valid = self.build_tsd(self.X_valid)  # (1508, 2) -> [(1339, 168, 2), (1339, 1, 2)]
+        # (13568, X) -> [(13399, 168, X), (13399, 1, prediction_step)]
+        self.data_train = self.build_tsd(self.X_train,
+                                         config["features"].index(config["prediction_feature"]))
+        # (1508, X) -> [(1339, 168, X), (1339, prediction_step)]
+        self.data_valid = self.build_tsd(self.X_valid,
+                                         config["features"].index(config["prediction_feature"]))
         if self.X_test is not None:
-            self.data_test = self.build_tsd(self.X_test)
+            self.data_test = self.build_tsd(self.X_test,
+                                            config["features"].index(config["prediction_feature"]))
         else:
             self.data_test = None
 
@@ -151,8 +169,8 @@ class TimeSeriesGenerator:
         """
         un-scale predicted output
         """
-        if self.scaler_y is not None:
-            return self.scaler_y.inverse_transform(y_predicted)
+        if self.scaler_engine is not None:
+            return self.scaler_engine.inverse_transform(y_predicted)
         return y_predicted
 
     def re_arrange_sequence(self, config):
@@ -214,7 +232,7 @@ class TimeSeriesGenerator:
             )
             self.data_test = self.data_test[0][..., np.newaxis], self.data_test[1]
 
-    def build_tsd(self, data):
+    def build_tsd_test(self, data):
         """
         Build time series dataset ==> (VALUES_, LABELS_)
         This function is used to build the time series dataset for training dataset, validation dataset and testing dataset
@@ -235,8 +253,32 @@ class TimeSeriesGenerator:
 
         return X_data, y_label
 
+    def build_tsd(self, data, feature_order):
+        """
+        Build time series dataset ==> (VALUES_, LABELS_)
+        This function is used to build the time series dataset for training dataset, validation dataset and testing dataset
+        :param data: [Number of records, Number of features]
+        :return: [Number of records, INPUT_WIDTH, INPUT_DIMENSION], [Number of records, OUTPUT_LENGTH, OUTPUT_DIMENSION]
 
-from aireplication.ultils.datasets import *
+        Args:
+            feature_order: Which feature will be predicted
+        """
+        X_data, y_label = [], []
+        if self.input_width >= len(data) - self.output_length - self.input_width:
+            raise ValueError(
+                f"Cannot devide sequence with length={len(data)}. The dataset is too small to be used input_length= {self.input_width}. Please reduce your input_length"
+            )
+
+        for i in range(self.input_width, len(data) - self.output_length):
+            X_data.append(data[i - self.input_width: i])
+            y_label.append(data[i: i + self.output_length][::, feature_order])
+
+        X_data, y_label = np.array(X_data), np.array(y_label)
+
+        return X_data, y_label
+
+
+from utils.datasets import *
 
 
 def get_all_data_supported():
@@ -259,12 +301,21 @@ class Dataset:
         self.dataloader = self.__load_data()
 
     def __load_data(self):
-        if self.dataset_name == cnu_str:
-            return CNU()
+        if self.dataset_name == cnu_str or \
+                self.dataset_name == cnu_str_engineering_7:
+            return CNU(data_name=self.dataset_name)
+
         elif self.dataset_name == comed_str:
             return COMED()
-        elif self.dataset_name == household_str:
-            return HouseholdDataLoader(
-                data_path=r'C:\Users\Andrew\Documents\Project\Time Series\dataset\Household_power_consumption\household_power_consumption.txt')
-        elif self.dataset_name == gyeonggi_str:
-            return GYEONGGI()
+
+        elif self.dataset_name == france_household_hour_str:
+            return FRANCEHOUSEHOLD()
+
+        elif self.dataset_name == gyeonggi_str or \
+                self.dataset_name == gyeonggi2955_str:
+            return GYEONGGI(data_name=self.dataset_name)
+
+        elif self.dataset_name == spain_str:
+            return SPAIN()
+
+        return None
